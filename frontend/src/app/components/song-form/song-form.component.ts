@@ -1,14 +1,18 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
+import { FormBuilder, FormGroup, Validators, ReactiveFormsModule, FormsModule } from '@angular/forms';
 import { Router, ActivatedRoute, RouterModule } from '@angular/router';
 import { SongService, Song } from '../../services/song.service';
 import { AuthService, User } from '../../services/auth.service';
+import { HttpClient } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import { Subject, debounceTime, distinctUntilChanged, switchMap, of, takeUntil } from 'rxjs';
 
 @Component({
   selector: 'app-song-form',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterModule],
+  imports: [CommonModule, ReactiveFormsModule, FormsModule, RouterModule],
   template: `
     <div class="min-h-screen bg-gray-50">
       <nav class="bg-white shadow">
@@ -67,6 +71,79 @@ import { AuthService, User } from '../../services/auth.service';
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
             <span class="ml-2 text-gray-600">Loading song...</span>
+          </div>
+
+          <!-- YouTube Search and Preview Container -->
+          <div *ngIf="!isLoadingSong" class="bg-white shadow rounded-lg p-6 mb-6">
+            
+            <!-- Search Input with Dropdown -->
+            <div class="relative mb-6">
+              <input
+                type="text"
+                [(ngModel)]="searchQuery"
+                (input)="onSearchInput()"
+                (focus)="onSearchFocus()"
+                (blur)="onSearchBlur()"
+                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                placeholder="Search for songs on YouTube...">
+              
+              <!-- Loading indicator -->
+              <div *ngIf="isSearching" class="absolute right-3 top-3">
+                <svg class="animate-spin h-4 w-4 text-indigo-600" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              </div>
+              
+              <!-- Dropdown Results -->
+              <div *ngIf="showDropdown && searchResults.length > 0" 
+                   class="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-96 overflow-y-auto">
+                <div *ngFor="let video of searchResults; let i = index" 
+                     (click)="selectVideo(video)"
+                     class="flex items-center p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0">
+                  <img [src]="video.thumbnail" [alt]="video.title" class="w-16 h-12 object-cover rounded mr-3 flex-shrink-0">
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-900 truncate">{{ video.title }}</p>
+                    <p class="text-xs text-gray-500 truncate">{{ video.channelTitle }}</p>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- No results message -->
+              <div *ngIf="showDropdown && searchResults.length === 0 && searchQuery.length > 2 && !isSearching"
+                   class="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg p-3">
+                <p class="text-sm text-gray-500">No results found</p>
+              </div>
+            </div>
+            
+            <div *ngIf="searchError" class="text-red-600 text-sm mb-4">
+              {{ searchError }}
+            </div>
+
+            <!-- YouTube Preview Player -->
+            <div>
+              <div *ngIf="embedUrl" class="aspect-video mb-4">
+                <iframe
+                  [src]="embedUrl"
+                  class="w-full h-full rounded-lg"
+                  frameborder="0"
+                  allowfullscreen>
+                </iframe>
+              </div>
+              <div *ngIf="!embedUrl" class="aspect-video bg-gray-100 rounded-lg flex items-center justify-center mb-4">
+                <p class="text-gray-500">YouTube preview will appear here when you select a song</p>
+              </div>
+              
+              <!-- Insert Details Button -->
+              <div *ngIf="selectedVideo" class="flex justify-center">
+                <button
+                  type="button"
+                  (click)="insertVideoDetails()"
+                  class="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+                  Insert Details
+                </button>
+              </div>
+            </div>
           </div>
 
           <!-- Form -->
@@ -173,34 +250,34 @@ import { AuthService, User } from '../../services/auth.service';
                 {{ errorMessage }}
               </div>
 
-              <!-- Form Actions -->
-              <div class="flex justify-end space-x-4">
-                <a
-                  routerLink="/songs"
-                  class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                  Cancel
-                </a>
-                <button
-                  type="submit"
-                  [disabled]="songForm.invalid || isSubmitting"
-                  class="px-4 py-2 bg-indigo-600 border border-transparent rounded-md text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <span *ngIf="isSubmitting" class="mr-2">
-                    <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                  </span>
-                  {{ isSubmitting ? (isEditMode ? 'Updating...' : 'Adding...') : (isEditMode ? 'Update Song' : 'Add Song') }}
-                </button>
-              </div>
-            </form>
+                <!-- Form Actions -->
+                <div class="flex justify-end space-x-4">
+                  <a
+                    routerLink="/songs"
+                    class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    Cancel
+                  </a>
+                  <button
+                    type="submit"
+                    [disabled]="songForm.invalid || isSubmitting"
+                    class="px-4 py-2 bg-indigo-600 border border-transparent rounded-md text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <span *ngIf="isSubmitting" class="mr-2">
+                      <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    </span>
+                    {{ isSubmitting ? (isEditMode ? 'Updating...' : 'Adding...') : (isEditMode ? 'Update Song' : 'Add Song') }}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
       </main>
     </div>
   `
 })
-export class SongFormComponent implements OnInit {
+export class SongFormComponent implements OnInit, OnDestroy {
   songForm: FormGroup;
   currentUser: User | null = null;
   isEditMode = false;
@@ -209,13 +286,25 @@ export class SongFormComponent implements OnInit {
   errorMessage = '';
   songId: number | null = null;
   youtubePreview: { videoId: string; thumbnail: string; title: string } | null = null;
+  
+  searchQuery = '';
+  searchResults: any[] = [];
+  isSearching = false;
+  searchError = '';
+  embedUrl: SafeResourceUrl | null = null;
+  showDropdown = false;
+  selectedVideo: any = null;
+  private searchSubject = new Subject<string>();
+  private destroy$ = new Subject<void>();
 
   constructor(
     private fb: FormBuilder,
     private songService: SongService,
     private authService: AuthService,
     private router: Router,
-    private route: ActivatedRoute
+    private route: ActivatedRoute,
+    private http: HttpClient,
+    private sanitizer: DomSanitizer
   ) {
     this.songForm = this.fb.group({
       youtubeUrl: ['', [Validators.required, Validators.pattern(/^https?:\/\/.+/), this.youtubeUrlValidator]],
@@ -238,6 +327,35 @@ export class SongFormComponent implements OnInit {
         this.loadSong();
       }
     });
+
+    // Set up debounced search
+    this.searchSubject.pipe(
+      debounceTime(300),
+      distinctUntilChanged(),
+      switchMap(query => {
+        if (query.length < 3) {
+          return of([]);
+        }
+        return this.performYouTubeSearch(query);
+      }),
+      takeUntil(this.destroy$)
+    ).subscribe({
+      next: (results) => {
+        this.searchResults = results;
+        this.isSearching = false;
+        this.showDropdown = true;
+      },
+      error: (error) => {
+        this.isSearching = false;
+        this.searchError = 'Search failed. Please try again.';
+        console.error('YouTube search error:', error);
+      }
+    });
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
   }
 
   youtubeUrlValidator(control: any) {
@@ -293,8 +411,93 @@ export class SongFormComponent implements OnInit {
         thumbnail: this.songService.getYouTubeThumbnail(videoId),
         title: 'YouTube Video Preview'
       };
+      this.updateEmbedUrl(videoId);
     } else {
       this.youtubePreview = null;
+      this.embedUrl = null;
+    }
+  }
+
+  updateEmbedUrl(videoId: string): void {
+    const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+    this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(embedUrl);
+  }
+
+  performYouTubeSearch(query: string) {
+    const searchUrl = `https://www.googleapis.com/youtube/v3/search`;
+    const params = {
+      part: 'snippet',
+      q: query,
+      type: 'video',
+      maxResults: '8',
+      key: environment.YOUTUBE_API
+    };
+
+    return this.http.get(searchUrl, { params }).pipe(
+      switchMap((response: any) => {
+        const results = response.items.map((item: any) => ({
+          videoId: item.id.videoId,
+          title: this.decodeHtmlEntities(item.snippet.title),
+          thumbnail: item.snippet.thumbnails.medium.url,
+          channelTitle: this.decodeHtmlEntities(item.snippet.channelTitle),
+          url: `https://www.youtube.com/watch?v=${item.id.videoId}`
+        }));
+        return of(results);
+      })
+    );
+  }
+
+  private decodeHtmlEntities(text: string): string {
+    const textArea = document.createElement('textarea');
+    textArea.innerHTML = text;
+    return textArea.value;
+  }
+
+  onSearchInput(): void {
+    this.searchError = '';
+    if (this.searchQuery.length >= 3) {
+      this.isSearching = true;
+      this.searchSubject.next(this.searchQuery);
+    } else {
+      this.searchResults = [];
+      this.showDropdown = false;
+      this.isSearching = false;
+    }
+  }
+
+  onSearchFocus(): void {
+    if (this.searchResults.length > 0) {
+      this.showDropdown = true;
+    }
+  }
+
+  onSearchBlur(): void {
+    // Delay hiding dropdown to allow for click selection
+    setTimeout(() => {
+      this.showDropdown = false;
+    }, 200);
+  }
+
+  selectVideo(video: any): void {
+    this.selectedVideo = video;
+    this.updateYouTubePreview(video.url);
+    this.showDropdown = false;
+    this.searchQuery = video.title;
+  }
+
+  insertVideoDetails(): void {
+    if (this.selectedVideo) {
+      this.songForm.patchValue({
+        youtubeUrl: this.selectedVideo.url,
+        songName: this.selectedVideo.title,
+        startTimeSeconds: 0 // Default to 0, user can manually adjust in the form
+      });
+      
+      // Clear the search and selected video after inserting
+      this.searchQuery = '';
+      this.selectedVideo = null;
+      this.searchResults = [];
+      this.showDropdown = false;
     }
   }
 
