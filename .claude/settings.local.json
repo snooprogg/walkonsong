@@ -13,7 +13,10 @@
       "Bash(ng version)",
       "Bash(ng serve:*)",
       "Bash(pkill:*)",
-      "Bash(ng build:*)"
+      "Bash(ng build:*)",
+      "Bash(npm run build:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)"
     ],
     "deny": []
   }

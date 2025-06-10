@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, Validators, ReactiveFormsModule, FormsModule } from '@angular/forms';
 import { Router, ActivatedRoute, RouterModule } from '@angular/router';
@@ -8,6 +8,14 @@ import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { Subject, debounceTime, distinctUntilChanged, switchMap, of, takeUntil } from 'rxjs';
+
+// YouTube Player API types
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+  }
+}
 
 @Component({
   selector: 'app-song-form',
@@ -122,15 +130,14 @@ import { Subject, debounceTime, distinctUntilChanged, switchMap, of, takeUntil }
 
             <!-- YouTube Preview Player -->
             <div>
-              <div *ngIf="embedUrl" class="aspect-video mb-4">
-                <iframe
-                  [src]="embedUrl"
-                  class="w-full h-full rounded-lg"
-                  frameborder="0"
-                  allowfullscreen>
-                </iframe>
+              <div *ngIf="selectedVideo" class="aspect-video mb-4">
+                <div 
+                  #youtubePlayer 
+                  id="youtube-player"
+                  class="w-full h-full rounded-lg">
+                </div>
               </div>
-              <div *ngIf="!embedUrl" class="aspect-video bg-gray-100 rounded-lg flex items-center justify-center mb-4">
+              <div *ngIf="!selectedVideo" class="aspect-video bg-gray-100 rounded-lg flex items-center justify-center mb-4">
                 <p class="text-gray-500">YouTube preview will appear here when you select a song</p>
               </div>
               
@@ -277,7 +284,7 @@ import { Subject, debounceTime, distinctUntilChanged, switchMap, of, takeUntil }
     </div>
   `
 })
-export class SongFormComponent implements OnInit, OnDestroy {
+export class SongFormComponent implements OnInit, OnDestroy, AfterViewInit {
   songForm: FormGroup;
   currentUser: User | null = null;
   isEditMode = false;
@@ -296,6 +303,10 @@ export class SongFormComponent implements OnInit, OnDestroy {
   selectedVideo: any = null;
   private searchSubject = new Subject<string>();
   private destroy$ = new Subject<void>();
+  
+  @ViewChild('youtubePlayer') youtubePlayerElement!: ElementRef;
+  private youtubePlayer: any = null;
+  private apiReady = false;
 
   constructor(
     private fb: FormBuilder,
@@ -353,9 +364,26 @@ export class SongFormComponent implements OnInit, OnDestroy {
     });
   }
 
+  ngAfterViewInit(): void {
+    this.initYouTubeAPI();
+  }
+
   ngOnDestroy(): void {
+    if (this.youtubePlayer) {
+      this.youtubePlayer.destroy();
+    }
     this.destroy$.next();
     this.destroy$.complete();
+  }
+
+  private initYouTubeAPI(): void {
+    if (window.YT && window.YT.Player) {
+      this.apiReady = true;
+    } else {
+      window.onYouTubeIframeAPIReady = () => {
+        this.apiReady = true;
+      };
+    }
   }
 
   youtubeUrlValidator(control: any) {
@@ -411,16 +439,49 @@ export class SongFormComponent implements OnInit, OnDestroy {
         thumbnail: this.songService.getYouTubeThumbnail(videoId),
         title: 'YouTube Video Preview'
       };
-      this.updateEmbedUrl(videoId);
+      this.createYouTubePlayer(videoId);
     } else {
       this.youtubePreview = null;
-      this.embedUrl = null;
+      if (this.youtubePlayer) {
+        this.youtubePlayer.destroy();
+        this.youtubePlayer = null;
+      }
     }
   }
 
-  updateEmbedUrl(videoId: string): void {
-    const embedUrl = `https://www.youtube.com/embed/${videoId}`;
-    this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(embedUrl);
+  private createYouTubePlayer(videoId: string): void {
+    if (!this.apiReady || !this.youtubePlayerElement) {
+      setTimeout(() => this.createYouTubePlayer(videoId), 100);
+      return;
+    }
+
+    if (this.youtubePlayer) {
+      this.youtubePlayer.loadVideoById(videoId);
+      return;
+    }
+
+    this.youtubePlayer = new window.YT.Player('youtube-player', {
+      height: '100%',
+      width: '100%',
+      videoId: videoId,
+      playerVars: {
+        autoplay: 0,
+        controls: 1,
+        disablekb: 0,
+        enablejsapi: 1,
+        fs: 1,
+        rel: 0,
+        showinfo: 0
+      },
+      events: {
+        onReady: (event: any) => {
+          console.log('YouTube player ready');
+        },
+        onStateChange: (event: any) => {
+          console.log('YouTube player state changed:', event.data);
+        }
+      }
+    });
   }
 
   performYouTubeSearch(query: string) {
@@ -487,10 +548,22 @@ export class SongFormComponent implements OnInit, OnDestroy {
 
   insertVideoDetails(): void {
     if (this.selectedVideo) {
+      let currentTime = 0;
+      
+      // Get current time from YouTube player if available
+      if (this.youtubePlayer && typeof this.youtubePlayer.getCurrentTime === 'function') {
+        try {
+          currentTime = Math.floor(this.youtubePlayer.getCurrentTime() || 0);
+        } catch (e) {
+          console.warn('Could not get current time from YouTube player:', e);
+          currentTime = 0;
+        }
+      }
+      
       this.songForm.patchValue({
         youtubeUrl: this.selectedVideo.url,
         songName: this.selectedVideo.title,
-        startTimeSeconds: 0 // Default to 0, user can manually adjust in the form
+        startTimeSeconds: currentTime
       });
       
       // Clear the search and selected video after inserting
@@ -498,6 +571,12 @@ export class SongFormComponent implements OnInit, OnDestroy {
       this.selectedVideo = null;
       this.searchResults = [];
       this.showDropdown = false;
+      
+      // Destroy the player
+      if (this.youtubePlayer) {
+        this.youtubePlayer.destroy();
+        this.youtubePlayer = null;
+      }
     }
   }
 

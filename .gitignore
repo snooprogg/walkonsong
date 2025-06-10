@@ -24,6 +24,7 @@ coverage/
 libpeerconnection.log
 testem.log
 typings/
+environments/
 
 # IDEs and editors
 .idea/
