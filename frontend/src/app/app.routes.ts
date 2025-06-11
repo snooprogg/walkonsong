@@ -15,30 +15,33 @@ export const routes: Routes = [
     path: 'verify-email', 
     loadComponent: () => import('./components/email-verification/email-verification.component').then(m => m.EmailVerificationComponent)
   },
-  { 
-    path: 'welcome', 
-    loadComponent: () => import('./components/welcome/welcome.component').then(m => m.WelcomeComponent),
-    canActivate: [AuthGuard]
-  },
-  { 
-    path: 'player', 
-    loadComponent: () => import('./components/player/player.component').then(m => m.PlayerComponent),
-    canActivate: [AuthGuard]
-  },
-  { 
-    path: 'songs', 
-    loadComponent: () => import('./components/songs/songs.component').then(m => m.SongsComponent),
-    canActivate: [AuthGuard]
-  },
-  { 
-    path: 'songs/add', 
-    loadComponent: () => import('./components/song-form/song-form.component').then(m => m.SongFormComponent),
-    canActivate: [AuthGuard]
-  },
-  { 
-    path: 'songs/edit/:id', 
-    loadComponent: () => import('./components/song-form/song-form.component').then(m => m.SongFormComponent),
-    canActivate: [AuthGuard]
+  {
+    path: 'app',
+    loadComponent: () => import('./components/wrapper/wrapper.component').then(m => m.WrapperComponent),
+    canActivate: [AuthGuard],
+    children: [
+      { 
+        path: 'welcome', 
+        loadComponent: () => import('./components/welcome/welcome.component').then(m => m.WelcomeComponent)
+      },
+      { 
+        path: 'player', 
+        loadComponent: () => import('./components/player/player.component').then(m => m.PlayerComponent)
+      },
+      { 
+        path: 'songs', 
+        loadComponent: () => import('./components/songs/songs.component').then(m => m.SongsComponent)
+      },
+      { 
+        path: 'songs/add', 
+        loadComponent: () => import('./components/song-form/song-form.component').then(m => m.SongFormComponent)
+      },
+      { 
+        path: 'songs/edit/:id', 
+        loadComponent: () => import('./components/song-form/song-form.component').then(m => m.SongFormComponent)
+      },
+      { path: '', redirectTo: 'welcome', pathMatch: 'full' }
+    ]
   },
   { path: '**', redirectTo: '/login' }
 ];
